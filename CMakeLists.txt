@@ -5,11 +5,13 @@ project(V8 LANGUAGES CXX C ASM)
 
 include(CMakeDependentOption)
 include(CMakePrintHelpers)
+include(GNUInstallDirs)
+
 option(V8_ENABLE_LITE_MODE "Enable lite mode, which optimizes for memory usage by disabling optimzations" OFF)
 cmake_dependent_option(V8_ENABLE_JIT "Enable the optimizing JIT compilers (Sparkplug, Maglev, Turbofan and Wasm)" ON "NOT V8_ENABLE_LITE_MODE" OFF)
-cmake_dependent_option(V8_ENABLE_WEBASSEMBLY "Enable Webassembly" ON "NOT V8_ENABLE_JIT OR NOT V8_ENABLE_LITE_MODE" OFF)
+cmake_dependent_option(V8_ENABLE_WEBASSEMBLY "Enable Webassembly. In V8, WebAssembly is JIT-only." ON "NOT V8_ENABLE_JIT OR NOT V8_ENABLE_LITE_MODE" OFF)
 option(V8_ENABLE_CONCURRENT_MARKING "Enable concurrent marking, which uses background threads to peform the marking step of the garbage collector" ON)
-option(V8_ENABLE_I18N "Enable Internationalization support" OFF)
+option(V8_ENABLE_I18N "Enable Internationalization support, which requires ICU." OFF)
 
 if(MSVC)
   enable_language(ASM_MASM)
@@ -21,7 +23,7 @@ if(MSVC)
     PROPERTY LANGUAGE ASM_MASM)
 endif()
 
-# Quiet warnings
+# Quiet warnings: this speeds up compilation by a noticable amount :p
 if (MSVC)
     add_compile_options(/W0)
 else()
@@ -39,8 +41,6 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 
 find_package(Python3 COMPONENTS Interpreter)
 find_package(Threads)
-
-include(GNUInstallDirs)
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 include(GenerateBuiltinsList)
@@ -549,7 +549,7 @@ if(NOT V8_ENABLE_WEBASSEMBLY)
         v8/src/compiler/wasm-loop-peeling.cc
         v8/src/compiler/wasm-typer.cc
 
-        # simd256_revec
+        # needs wasm_simd256_revec
         v8/src/compiler/linear-scheduler.cc
         v8/src/compiler/revectorizer.cc
     )
