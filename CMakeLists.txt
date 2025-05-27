@@ -47,12 +47,10 @@ set(is-freebsd $<PLATFORM_ID:FreeBSD>)
 set(is-darwin $<PLATFORM_ID:Darwin>)
 set(is-linux $<PLATFORM_ID:Linux>)
 set(is-win $<PLATFORM_ID:Windows>)
-set(is-aix $<PLATFORM_ID:AIX>)
 string(CONCAT is-posix $<OR:
   ${is-freebsd},
   ${is-darwin},
   ${is-linux},
-  ${is-aix}
 >)
 
 set(is-msvc $<CXX_COMPILER_ID:MSVC>)
@@ -829,11 +827,9 @@ add_library(v8_libbase STATIC
   v8/src/base/utils/random-number-generator.cc
   v8/src/base/vlq-base64.cc
   v8/src/base/virtual-address-space.cc
-  $<$<NOT:$<OR:${is-win},${is-aix}>>:v8/src/base/platform/platform-posix-time.cc>
+  $<$<NOT:${is-win}>:v8/src/base/platform/platform-posix-time.cc>
   $<${is-win}:v8/src/base/platform/platform-win32.cc>
   $<${is-win}:v8/src/base/debug/stack_trace_win.cc>
-  $<${is-aix}:v8/src/base/debug/stack_trace_posix.cc>
-  $<${is-aix}:v8/src/base/platform/platform-aix.cc>
   $<${is-darwin}:v8/src/base/debug/stack_trace_posix.cc>
   $<${is-darwin}:v8/src/base/platform/platform-darwin.cc>
   $<${is-linux}:v8/src/base/debug/stack_trace_posix.cc>
@@ -1047,7 +1043,6 @@ add_executable(mksnapshot
   v8/src/init/setup-isolate-full.cc
   v8/src/snapshot/embedded/embedded-empty.cc
   v8/src/snapshot/embedded/embedded-file-writer.cc
-  v8/src/snapshot/embedded/platform-embedded-file-writer-aix.cc
   v8/src/snapshot/embedded/platform-embedded-file-writer-base.cc
   v8/src/snapshot/embedded/platform-embedded-file-writer-generic.cc
   v8/src/snapshot/embedded/platform-embedded-file-writer-mac.cc
