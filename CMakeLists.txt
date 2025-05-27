@@ -4,8 +4,11 @@ set(CMAKE_DISABLE_IN_SOURCE_BUILD ON)
 project(V8 LANGUAGES CXX C ASM)
 
 include(CMakeDependentOption)
-option(V8_ENABLE_WEBASSEMBLY "Enable Webassembly" ON)
-option(V8_ENABLE_CONCURRENT_MARKING "Enable concurrent marking in garbage collector" ON)
+include(CMakePrintHelpers)
+option(V8_ENABLE_LITE_MODE "Enable lite mode, which optimizes for memory usage by disabling optimzations" OFF)
+cmake_dependent_option(V8_ENABLE_JIT "Enable the optimizing JIT compilers (Sparkplug, Maglev, Turbofan and Wasm)" ON "NOT V8_ENABLE_LITE_MODE" OFF)
+cmake_dependent_option(V8_ENABLE_WEBASSEMBLY "Enable Webassembly" ON "NOT V8_ENABLE_JIT OR NOT V8_ENABLE_LITE_MODE" OFF)
+option(V8_ENABLE_CONCURRENT_MARKING "Enable concurrent marking, which uses background threads to peform the marking step of the garbage collector" ON)
 option(V8_ENABLE_I18N "Enable Internationalization support" OFF)
 
 if(MSVC)
@@ -92,6 +95,16 @@ string(CONCAT is-x64 $<OR:
 
 set(has-wasm $<BOOL:${V8_ENABLE_WEBASSEMBLY}>)
 set(has-i18n $<BOOL:${V8_ENABLE_I18N}>)
+
+if(V8_ENABLE_LITE_MODE)
+    add_definitions("-DV8_LITE_MODE")
+endif()
+
+if(V8_ENABLE_JIT)
+    add_definitions("-DV8_ENABLE_SPARKPLUG -DV8_ENABLE_MAGLEV -DV8_ENABLE_TURBOFAN")
+else()
+    add_definitions("-DV8_JITLESS")
+endif()
 
 if(V8_ENABLE_WEBASSEMBLY)
     add_definitions("-DV8_ENABLE_WEBASSEMBLY -DV8_ENABLE_WASM_SIMD256_REVEC")
