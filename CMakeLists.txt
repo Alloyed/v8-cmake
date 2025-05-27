@@ -3,6 +3,11 @@ set(CMAKE_USER_MAKE_RULES_OVERRIDE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/MSVC.cmake
 set(CMAKE_DISABLE_IN_SOURCE_BUILD ON)
 project(V8 LANGUAGES CXX C ASM)
 
+include(CMakeDependentOption)
+option(V8_ENABLE_WEBASSEMBLY "Enable Webassembly" ON)
+option(V8_ENABLE_CONCURRENT_MARKING "Enable concurrent marking in garbage collector" ON)
+option(V8_ENABLE_I18N "Enable Internationalization support" OFF)
+
 if(MSVC)
   enable_language(ASM_MASM)
   set_property(
@@ -11,10 +16,15 @@ if(MSVC)
            v8/src/heap/base/asm/ia32/push_registers_masm.asm
            v8/src/heap/base/asm/x64/push_registers_masm.asm
     PROPERTY LANGUAGE ASM_MASM)
-
 endif()
 
-add_definitions("-DV8_ENABLE_WEBASSEMBLY -DV8_ADVANCED_BIGINT_ALGORITHMS -DV8_ENABLE_WASM_SIMD256_REVEC")
+# Quiet warnings
+if (MSVC)
+    add_compile_options(/W0)
+else()
+    add_compile_options(-w)
+endif()
+
 if(WIN32)
   add_definitions("-DNOMINMAX -DV8_ENABLE_SYSTEM_INSTRUMENTATION")
   # todo: for zlib, need to extract zlib when refactor
@@ -22,16 +32,16 @@ if(WIN32)
   add_definitions("-D_WIN32_WINNT=0x0602")
 endif()
 
-list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 
-find_package (Python3 COMPONENTS Interpreter)
+find_package(Python3 COMPONENTS Interpreter)
 find_package(Threads)
 
-include(CMakeDependentOption)
 include(GNUInstallDirs)
 
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 include(GenerateBuiltinsList)
+include(CheckPythonModuleExists)
 
 check_python_module_exists(PYTHON_HAVE_MARKUPSAFE markupsafe)
 
@@ -80,8 +90,17 @@ string(CONCAT is-x64 $<OR:
   $<STREQUAL:${CMAKE_SYSTEM_PROCESSOR},x86_64>
 >)
 
-option(V8_ENABLE_CONCURRENT_MARKING "Enable concurrent marking" ON)
-option(V8_ENABLE_I18N "Enable Internationalization support")
+set(has-wasm $<BOOL:${V8_ENABLE_WEBASSEMBLY}>)
+set(has-i18n $<BOOL:${V8_ENABLE_I18N}>)
+
+if(V8_ENABLE_WEBASSEMBLY)
+    add_definitions("-DV8_ENABLE_WEBASSEMBLY -DV8_ENABLE_WASM_SIMD256_REVEC")
+endif()
+
+if(V8_ENABLE_CONCURRENT_MARKING)
+    add_definitions("-DV8_CONCURRENT_MARKING")
+endif()
+add_definitions("-DV8_ADVANCED_BIGINT_ALGORITHMS")
 
 set(
   v8_defines
@@ -97,7 +116,6 @@ set(
   $<${is-ppc64}:V8_TARGET_ARCH_PPC64>
   $<${is-win}:NOMINMAX>
   $<$<AND:${is-win},${is-x64}>:V8_OS_WIN_X64>
-  $<$<BOOL:${V8_ENABLE_CONCURRENT_MARKING}>:V8_CONCURRENT_MARKING>
   $<${is-win}:V8_OS_WIN32>
 )
 
@@ -115,11 +133,7 @@ set(enable-exceptions
   $<$<CXX_COMPILER_ID:GNU>:-fexceptions>
 )
 
-set(enable-fpic
-  $<$<CXX_COMPILER_ID:AppleClang>:-fPIC>
-  $<$<CXX_COMPILER_ID:Clang>:-fPIC>
-  $<$<CXX_COMPILER_ID:GNU>:-fPIC>
-)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 #
 # d8
@@ -139,9 +153,6 @@ add_executable(
 
 target_compile_definitions(d8 PRIVATE $<${is-msvc}:_HAS_EXCEPTIONS=0>)
 target_compile_options(d8 PRIVATE ${disable-exceptions})
-if(enable-fPIC)
-  target_compile_options(d8 PRIVATE ${enable-fpic})
-endif()
 
 target_include_directories(d8
   PUBLIC
@@ -324,12 +335,31 @@ list(REMOVE_ITEM strings-sources v8/src/strings/char-predicates.cc)
 list(APPEND snapshot-sources v8/src/snapshot/embedded/embedded-data.cc)
 list(APPEND wasm-sources ${wasm-baseline-sources})
 
-add_library(v8_base_without_compiler STATIC
+if(NOT V8_ENABLE_WEBASSEMBLY)
+    list(REMOVE_ITEM debug-sources
+      v8/src/debug/debug-wasm-objects.cc
+    )
+    list(REMOVE_ITEM runtime-sources
+      v8/src/runtime/runtime-test-wasm.cc
+      v8/src/runtime/runtime-wasm.cc
+    )
+    list(REMOVE_ITEM builtin-sources
+      v8/src/builtins/builtins-wasm-gen.cc
+    )
+endif()
+
+list(APPEND trap-handler-sources 
   $<${is-posix}:v8/src/trap-handler/handler-inside-posix.cc>
   $<${is-posix}:v8/src/trap-handler/handler-outside-posix.cc>
-  $<$<AND:${is-x64},${is-win}>:v8/src/diagnostics/unwinding-info-win64.cc>
   $<$<AND:${is-x64},${is-win}>:v8/src/trap-handler/handler-inside-win.cc>
   $<$<AND:${is-x64},${is-win}>:v8/src/trap-handler/handler-outside-win.cc>
+  v8/src/trap-handler/handler-inside.cc
+  v8/src/trap-handler/handler-outside.cc
+  v8/src/trap-handler/handler-shared.cc
+)
+
+add_library(v8_base_without_compiler STATIC
+  $<$<AND:${is-x64},${is-win}>:v8/src/diagnostics/unwinding-info-win64.cc>
   $<${is-x64}:v8/src/codegen/x64/assembler-x64.cc>
   $<${is-x64}:v8/src/codegen/x64/cpu-x64.cc>
   $<${is-x64}:v8/src/codegen/x64/macro-assembler-x64.cc>
@@ -375,9 +405,9 @@ add_library(v8_base_without_compiler STATIC
   $<$<AND:${is-ppc},${is-ppc64}>:v8/src/execution/ppc/frame-constants-ppc.cc>
   $<$<AND:${is-ppc},${is-ppc64}>:v8/src/execution/ppc/simulator-ppc.cc>
   $<$<AND:${is-ppc},${is-ppc64}>:v8/src/regexp/ppc/regexp-macro-assembler-ppc.cc>
-  $<$<BOOL:${V8_ENABLE_I18N}>:$<TARGET_OBJECTS:v8-i18n-support>>
+  $<${has-i18n}:$<TARGET_OBJECTS:v8-i18n-support>>
   ${api-sources}
-  ${asmjs-sources}
+  $<${has-wasm}:${asmjs-sources}>
   ${ast-sources}
   ${builtin-sources}
   ${baseline-sources}
@@ -429,12 +459,10 @@ add_library(v8_base_without_compiler STATIC
   v8/src/tracing/trace-event.cc
   v8/src/tracing/traced-value.cc
   v8/src/tracing/tracing-category-observer.cc
-  v8/src/trap-handler/handler-inside.cc
-  v8/src/trap-handler/handler-outside.cc
-  v8/src/trap-handler/handler-shared.cc
   v8/src/temporal/temporal-parser.cc
   ${utils-sources}
-  ${wasm-sources}
+  $<${has-wasm}:${wasm-sources}>
+  $<${has-wasm}:${trap-handler-sources}>
   ${zone-sources}
   ${zlib-sources}
   $<TARGET_OBJECTS:v8-adler32>
@@ -463,9 +491,6 @@ set_property(SOURCE v8/src/diagnostics/unwinding-info-win64.cc
 
 target_compile_definitions(v8_base_without_compiler PRIVATE ${v8_defines} $<${is-msvc}:_HAS_EXCEPTIONS=0>)
 target_compile_options(v8_base_without_compiler PRIVATE ${disable-exceptions})
-if(enable-fPIC)
-  target_compile_options(v8_base_without_compiler PRIVATE ${enable-fpic})
-endif()
 
 target_include_directories(v8_base_without_compiler
   PRIVATE
@@ -494,14 +519,33 @@ file(GLOB_RECURSE compiler-sources
   CONFIGURE_DEPENDS v8/src/compiler/*.cc
 )
 list(FILTER compiler-sources EXCLUDE REGEX ".*backend/.*/.*[.]cc$")
+if(NOT V8_ENABLE_WEBASSEMBLY)
+    list(REMOVE_ITEM compiler-sources
+        v8/src/compiler/int64-lowering.cc
+        v8/src/compiler/wasm-address-reassociation.cc
+        v8/src/compiler/wasm-call-descriptors.cc
+        v8/src/compiler/wasm-compiler.cc
+        v8/src/compiler/wasm-escape-analysis.cc
+        v8/src/compiler/wasm-gc-lowering.cc
+        v8/src/compiler/wasm-gc-operator-reducer.cc
+        v8/src/compiler/wasm-graph-assembler.cc
+        v8/src/compiler/wasm-inlining-into-js.cc
+        v8/src/compiler/wasm-inlining.cc
+        v8/src/compiler/wasm-js-lowering.cc
+        v8/src/compiler/wasm-load-elimination.cc
+        v8/src/compiler/wasm-loop-peeling.cc
+        v8/src/compiler/wasm-typer.cc
+
+        # simd256_revec
+        v8/src/compiler/linear-scheduler.cc
+        v8/src/compiler/revectorizer.cc
+    )
+endif()
 
 add_library(v8_compiler STATIC)
 target_sources(v8_compiler PRIVATE ${compiler-sources})
 target_compile_definitions(v8_compiler PRIVATE ${v8_defines} $<${is-msvc}:_HAS_EXCEPTIONS=0>)
 target_compile_options(v8_compiler PRIVATE ${disable-exceptions})
-if(enable-fPIC)
-  target_compile_options(v8_compiler PRIVATE ${enable-fpic})
-endif()
 
 target_include_directories(v8_compiler
   PUBLIC
@@ -535,7 +579,7 @@ add_library(
   $<${is-ppc}:v8/src/builtins/ppc/builtins-ppc.cc>
   $<${is-s390}:v8/src/builtins/s390/builtins-s390.cc>
   $<${is-x64}:v8/src/builtins/x64/builtins-x64.cc>
-  $<$<BOOL:${V8_ENABLE_I18N}>:v8/src/builtins/builtins-intl-gen.cc>
+  $<${has-i18n}:v8/src/builtins/builtins-intl-gen.cc>
   v8/src/builtins/builtins-array-gen.cc
   v8/src/builtins/builtins-async-function-gen.cc
   v8/src/builtins/builtins-async-gen.cc
@@ -564,7 +608,7 @@ add_library(
   v8/src/builtins/builtins-sharedarraybuffer-gen.cc
   v8/src/builtins/builtins-string-gen.cc
   v8/src/builtins/builtins-typed-array-gen.cc
-  v8/src/builtins/builtins-wasm-gen.cc
+  $<${has-wasm}:v8/src/builtins/builtins-wasm-gen.cc>
   v8/src/builtins/growable-fixed-array-gen.cc
   v8/src/builtins/setup-builtins-internal.cc
   v8/src/codegen/code-stub-assembler.cc
@@ -580,9 +624,6 @@ add_library(
 
 target_compile_definitions(v8_initializers PRIVATE ${v8_defines} $<${is-msvc}:_HAS_EXCEPTIONS=0>)
 target_compile_options(v8_initializers PRIVATE ${disable-exceptions})
-if(enable-fPIC)
-  target_compile_options(v8_initializers PRIVATE ${enable-fpic})
-endif()
 
 target_include_directories(v8_initializers
   PRIVATE
@@ -607,9 +648,6 @@ add_library(
 
 target_compile_definitions(v8_snapshot PRIVATE $<${is-msvc}:_HAS_EXCEPTIONS=0>)
 target_compile_options(v8_snapshot PRIVATE ${disable-exceptions})
-if(enable-fPIC)
-  target_compile_options(v8_snapshot PRIVATE ${enable-fpic})
-endif()
 target_include_directories(v8_snapshot PRIVATE ${PROJECT_SOURCE_DIR}/v8)
 
 target_link_libraries(v8_snapshot
@@ -694,9 +732,6 @@ add_library(v8_inspector STATIC
 
 target_compile_features(v8_inspector PUBLIC cxx_std_17)
 target_compile_options(v8_inspector PRIVATE ${disable-exceptions})
-if(enable-fPIC)
-  target_compile_options(v8_inspector PRIVATE ${enable-fpic})
-endif()
 target_compile_definitions(v8_inspector PUBLIC $<${is-msvc}:_HAS_EXCEPTIONS=0>)
 
 target_include_directories(v8_inspector
@@ -724,7 +759,7 @@ add_custom_command(
 
 add_custom_command(
   COMMAND
-    Python::Interpreter
+    Python3::Interpreter
     v8/third_party/inspector_protocol/code_generator.py
     --config v8/src/inspector/inspector_protocol_config.json
     --config_value protocol.path=v8/include/js_protocol.pdl
@@ -767,9 +802,6 @@ target_sources(v8_libplatform
 
 target_compile_definitions(v8_libplatform PRIVATE $<${is-msvc}:_HAS_EXCEPTIONS=0>)
 target_compile_options(v8_libplatform PRIVATE ${disable-exceptions})
-if(enable-fPIC)
-  target_compile_options(v8_libplatform PRIVATE ${enable-fpic})
-endif()
 
 target_include_directories(v8_libplatform
   PUBLIC
@@ -794,9 +826,6 @@ target_include_directories(v8_libsampler
 
 target_compile_definitions(v8_libsampler PRIVATE $<${is-msvc}:_HAS_EXCEPTIONS=0>)
 target_compile_options(v8_libsampler PRIVATE ${disable-exceptions})
-if(enable-fPIC)
-  target_compile_options(v8_libsampler PRIVATE ${enable-fpic})
-endif()
 target_include_directories(v8_libsampler PRIVATE ${PROJECT_SOURCE_DIR}/v8)
 target_link_libraries(v8_libsampler PRIVATE v8_libbase)
 
@@ -843,9 +872,6 @@ set_property(SOURCE v8/src/base/utils/random-number-generator.cc
 
 target_compile_definitions(v8_libbase PRIVATE $<${is-win}:UNICODE> $<${is-msvc}:_HAS_EXCEPTIONS=0>)
 target_compile_options(v8_libbase PRIVATE ${disable-exceptions})
-if(enable-fPIC)
-  target_compile_options(v8_libbase PRIVATE ${enable-fpic})
-endif()
 target_include_directories(v8_libbase PRIVATE ${PROJECT_SOURCE_DIR}/v8)
 target_link_libraries(v8_libbase
   PRIVATE
@@ -899,12 +925,22 @@ list(APPEND torque_files ${torque-builtins})
 list(APPEND torque_files ${torque-objects})
 
 list(APPEND torque_files
-  src/debug/debug-wasm-objects.tq
   src/ic/handler-configuration.tq
-  src/wasm/wasm-objects.tq
   test/torque/test-torque.tq
   third_party/v8/builtins/array-sort.tq
 )
+
+if(V8_ENABLE_WEBASSEMBLY)
+    list(APPEND torque_files
+        src/debug/debug-wasm-objects.tq
+        src/wasm/wasm-objects.tq
+    )
+else()
+    list(REMOVE_ITEM torque_files
+        src/builtins/wasm.tq
+        src/builtins/js-to-wasm.tq
+    )
+endif()
 
 if(NOT V8_ENABLE_I18N)
   list(REMOVE_ITEM torque_files
@@ -978,9 +1014,6 @@ add_library(
 
 target_compile_definitions(v8_torque_generated PRIVATE $<${is-msvc}:_HAS_EXCEPTIONS=0>)
 target_compile_options(v8_torque_generated PRIVATE ${disable-exceptions})
-if(enable-fPIC)
-  target_compile_options(v8_torque_generated PRIVATE ${enable-fpic})
-endif()
 target_link_libraries(v8_torque_generated PRIVATE v8-bytecodes-builtin-list)
 
 target_include_directories(v8_torque_generated
@@ -1047,6 +1080,7 @@ add_executable(mksnapshot
   v8/src/snapshot/embedded/platform-embedded-file-writer-generic.cc
   v8/src/snapshot/embedded/platform-embedded-file-writer-mac.cc
   v8/src/snapshot/embedded/platform-embedded-file-writer-win.cc
+  v8/src/snapshot/embedded/platform-embedded-file-writer-aix.cc
   v8/src/snapshot/mksnapshot.cc
   v8/src/snapshot/snapshot-empty.cc
 )
